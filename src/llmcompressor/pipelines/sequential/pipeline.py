@@ -1,4 +1,5 @@
 import contextlib
+import logging
 from typing import TYPE_CHECKING
 
 import torch
@@ -20,6 +21,8 @@ from llmcompressor.utils.helpers import DisableQuantization, calibration_forward
 
 if TYPE_CHECKING:
     from llmcompressor.args.dataset_arguments import DatasetArguments
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["SequentialPipeline"]
 
@@ -46,9 +49,14 @@ class SequentialPipeline(CalibrationPipeline):
         data loader. This may be an issue for vision models with vision datasets, due
         to specialized input processing in the model.
 
-        In the event that tracing fails, a torch.fx.proxy.TraceError will be raised. A
-        model can be made traceable by wrapping the untraceable functions (see
-        llmcompressor.transformers.tracing)
+        If tracing fails (e.g., torch.fx.proxy.TraceError, RuntimeError, ValueError),
+        the pipeline automatically falls back to the IndependentPipeline which processes
+        modifiers independently without requiring model tracing. This provides graceful
+        degradation for models with untraceable custom code (e.g., Molmo, models with
+        complex control flow).
+
+        For models that can be made traceable, see llmcompressor.transformers.tracing
+        for wrapping untraceable functions.
 
         :param model: model being calibrated
         :param dataloader: loads data for calibration
@@ -66,10 +74,23 @@ class SequentialPipeline(CalibrationPipeline):
 
         ignore = dataset_args.tracing_ignore
 
-        # trace subgraphs
+        # trace subgraphs with fallback to independent pipeline on failure
         sample_input = next(iter(dataloader))
-        subgraphs = trace_subgraphs(model, sample_input, sequential_targets, ignore)
-        num_subgraphs = len(subgraphs)
+        try:
+            subgraphs = trace_subgraphs(model, sample_input, sequential_targets, ignore)
+            num_subgraphs = len(subgraphs)
+        except Exception as e:
+            # If tracing fails (e.g., torch.fx.proxy.TraceError, RuntimeError, ValueError),
+            # fall back to independent pipeline which doesn't require tracing
+            logger.warning(
+                f"Sequential pipeline tracing failed with {type(e).__name__}: {e}. "
+                f"Falling back to independent pipeline which processes modifiers "
+                f"independently without tracing."
+            )
+            from llmcompressor.pipelines.independent.pipeline import IndependentPipeline
+
+            # Delegate to independent pipeline
+            return IndependentPipeline()(model, dataloader, dataset_args)
 
         LifecycleCallbacks.calibration_epoch_start()
 
