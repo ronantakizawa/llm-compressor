@@ -38,9 +38,12 @@ class IndependentPipeline(CalibrationPipeline):
             for modifier in modifiers:
                 mod_type = type(modifier).__name__
                 session.lifecycle.recipe.modifiers = [modifier]
-                pipeline = CalibrationPipeline.from_modifiers([modifier])
+
+                # Use BasicPipeline directly to avoid re-inferring SequentialPipeline
+                # BasicPipeline performs simple forward passes without tracing
+                pipeline = CalibrationPipeline.load_from_registry("basic")
                 pipeline_name = pipeline.__class__.__name__
-                _logger.info(f"Inferred `{pipeline_name}` for `{mod_type}`")
+                _logger.info(f"Using `{pipeline_name}` for `{mod_type}`")
 
                 pipeline(model, dataloader, dataset_args)
 
