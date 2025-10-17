@@ -89,8 +89,17 @@ class SequentialPipeline(CalibrationPipeline):
             )
             from llmcompressor.pipelines.independent.pipeline import IndependentPipeline
 
+            # Clear sequential_targets to prevent infinite loop
+            # This ensures IndependentPipeline won't try to use SequentialPipeline again
+            original_sequential_targets = dataset_args.sequential_targets
+            dataset_args.sequential_targets = None
+
             # Delegate to independent pipeline
-            return IndependentPipeline()(model, dataloader, dataset_args)
+            result = IndependentPipeline()(model, dataloader, dataset_args)
+
+            # Restore original value
+            dataset_args.sequential_targets = original_sequential_targets
+            return result
 
         # Wrap the entire sequential execution in try-except
         # If execution of traced graphs fails, fall back to independent pipeline
@@ -165,5 +174,14 @@ class SequentialPipeline(CalibrationPipeline):
             )
             from llmcompressor.pipelines.independent.pipeline import IndependentPipeline
 
+            # Clear sequential_targets to prevent infinite loop
+            # This ensures IndependentPipeline won't try to use SequentialPipeline again
+            original_sequential_targets = dataset_args.sequential_targets
+            dataset_args.sequential_targets = None
+
             # Delegate to independent pipeline
-            return IndependentPipeline()(model, dataloader, dataset_args)
+            result = IndependentPipeline()(model, dataloader, dataset_args)
+
+            # Restore original value
+            dataset_args.sequential_targets = original_sequential_targets
+            return result
