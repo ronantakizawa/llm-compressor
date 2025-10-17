@@ -92,15 +92,18 @@ class SequentialPipeline(CalibrationPipeline):
             # Delegate to independent pipeline
             return IndependentPipeline()(model, dataloader, dataset_args)
 
-        LifecycleCallbacks.calibration_epoch_start()
+        # Wrap the entire sequential execution in try-except
+        # If execution of traced graphs fails, fall back to independent pipeline
+        try:
+            LifecycleCallbacks.calibration_epoch_start()
 
-        # TODO: remove this to enable quantization aware calibration for GPTQ and AWQ
-        disable_qac = any(
-            type(mod).__name__ in ["GPTQModifier", "AWQModifier"]
-            for mod in session.lifecycle.recipe.modifiers
-        )
+            # TODO: remove this to enable quantization aware calibration for GPTQ and AWQ
+            disable_qac = any(
+                type(mod).__name__ in ["GPTQModifier", "AWQModifier"]
+                for mod in session.lifecycle.recipe.modifiers
+            )
 
-        with contextlib.ExitStack() as stack:
+            with contextlib.ExitStack() as stack:
             stack.enter_context(calibration_forward_context(model))
             # Optionally disable quantization
             if not dataset_args.quantization_aware_calibration or disable_qac:
@@ -150,5 +153,17 @@ class SequentialPipeline(CalibrationPipeline):
                                 activations.update(batch_idx, output)
                                 activations.delete(batch_idx, subgraph.consumed_names)
 
-            # redundant, finish any remaining compression
-            LifecycleCallbacks.calibration_epoch_end()
+                # redundant, finish any remaining compression
+                LifecycleCallbacks.calibration_epoch_end()
+
+        except Exception as e:
+            # If execution of traced subgraphs fails, fall back to independent pipeline
+            logger.warning(
+                f"Sequential pipeline execution failed with {type(e).__name__}: {e}. "
+                f"Falling back to independent pipeline which processes modifiers "
+                f"independently without tracing."
+            )
+            from llmcompressor.pipelines.independent.pipeline import IndependentPipeline
+
+            # Delegate to independent pipeline
+            return IndependentPipeline()(model, dataloader, dataset_args)
